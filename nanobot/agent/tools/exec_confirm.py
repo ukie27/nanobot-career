@@ -68,15 +68,16 @@ class ConfirmManager:
         self._lock = asyncio.Lock()
         
         # 回调：发送提示给用户
-        self.send_prompt_callback: Optional[Callable[[str, str], asyncio.Future]] = None
+        self.send_prompt_callback: Optional[Callable[[str, str, str], asyncio.Future]] = None
     
-    def set_send_prompt_callback(self, callback: Callable[[str, str], asyncio.Future]):
+    def set_send_prompt_callback(self, callback: Callable[[str, str, str], asyncio.Future]):
         """设置发送提示的回调"""
         self.send_prompt_callback = callback
     
     async def request_confirm(
         self,
-        session_key: str,
+        channel: str,
+        chat_id: str,
         command: str,
         risk_level: str,
         timeout: int = 60
@@ -97,6 +98,8 @@ class ConfirmManager:
         # 创建 Future 用于接收结果
         future = asyncio.get_event_loop().create_future()
         
+        session_key = f"{channel}:{chat_id}"
+
         pending = PendingConfirm(
             request_id=f"{session_key}_{uuid.uuid4().hex[:6]}",
             command=command,
@@ -128,13 +131,16 @@ class ConfirmManager:
         except asyncio.CancelledError:
             return ConfirmResult.CANCELLED
     
-    async def _process_queue(self, session_key: str):
+    async def _process_queue(self, channel: str, chat_id: str):
         """
         队列处理器：顺序处理同一会话的所有确认请求
         
         不同会话的队列处理器可以并发运行。
         统一控制超时计时。
         """
+
+        session_key = f"{channel}:{chat_id}"
+
         while True:
             # 获取当前请求
             async with self._lock:
@@ -155,7 +161,8 @@ class ConfirmManager:
             if self.send_prompt_callback:
                 try:
                     await self.send_prompt_callback(
-                        session_key,
+                        channel,
+                        chat_id,
                         self._format_prompt(pending, len(queue.confirms))
                     )
                 except Exception as e:
@@ -192,7 +199,7 @@ class ConfirmManager:
             return
         await future
     
-    def try_resolve(self, session_key: str, content: str) -> Tuple[bool, Optional[bool]]:
+    def try_resolve(self, channel: str, chat_id: str, content: str) -> Tuple[bool, Optional[bool]]:
         """
         尝试解析用户输入为确认命令
         
@@ -207,6 +214,8 @@ class ConfirmManager:
             - (True, False): 拒绝执行
             - (True, None): 是确认命令，但没有匹配的请求或已过期
         """
+        session_key = f"{channel}:{chat_id}"
+
         # 解析决策
         decision = self._parse_decision(content.strip())
         if decision is None:
@@ -219,12 +228,6 @@ class ConfirmManager:
         
         # 只处理队列中的第一个（当前正在等待的）
         pending = queue.confirms[0]
-        
-        # 检查是否已过期
-        if datetime.now() > pending.expires_at:
-            if not pending.future.done():
-                pending.future.set_result(ConfirmResult.TIMEOUT)
-            return (True, None)
         
         # 设置结果，唤醒 request_confirm
         if not pending.future.done():
@@ -275,33 +278,33 @@ class ConfirmManager:
         remaining = int((pending.expires_at - datetime.now()).total_seconds())
         remaining = max(0, remaining)
         
-        # 风险等级 emoji
-        emoji = "⚠️" if pending.risk_level == "NORMAL" else "🔴"
         
-        return f"""{emoji} 执行确认请求 [{pending.risk_level}]{position_info}
+        return f"""执行确认请求 [{pending.risk_level}]{position_info}
 
 即将执行: `{pending.command}`
 请求ID: `{pending.request_id}`
 
-⏱️ 剩余时间: {remaining}秒
+剩余时间: {remaining}秒
 
 请回复:
-  ✅ 同意执行: 输入 `\\是` 或 `\\yes`
-  ❌ 拒绝执行: 输入 `\\否` 或 `\\no`
+  同意执行: 输入 `\\是` 或 `\\yes`
+  拒绝执行: 输入 `\\否` 或 `\\no`
 
-⚠️ 输入其他内容将视为普通聊天消息，本次请求保持等待状态。
-⏳ 超时将自动取消执行。"""
+输入其他内容将视为普通聊天消息，本次请求保持等待状态。
+超时将自动取消执行。"""
     
-    def cancel_session(self, session_key: str, reason: str = "会话结束"):
+    def cancel_session(self, channel: str, chat_id: str, reason: str = "会话结束"):
         """
         取消会话的所有待处理确认
         
         用于会话断开或清理时调用。
         
         Args:
-            session_key: 会话标识
+            channel: 频道
+            chat_id: 聊天ID
             reason: 取消原因
         """
+        session_key = f"{channel}:{chat_id}"
         queue = self._sessions.get(session_key)
         if not queue:
             return
@@ -314,16 +317,18 @@ class ConfirmManager:
         # 清理
         del self._sessions[session_key]
     
-    def get_session_stats(self, session_key: str) -> Optional[Dict]:
+    def get_session_stats(self, channel: str, chat_id: str) -> Optional[Dict]:
         """
         获取会话的统计信息
         
         Args:
-            session_key: 会话标识
+            channel: 频道
+            chat_id: 聊天ID
         
         Returns:
             统计信息字典，或 None
         """
+        session_key = f"{channel}:{chat_id}"
         queue = self._sessions.get(session_key)
         if not queue:
             return None

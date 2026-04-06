@@ -10,6 +10,7 @@ import time
 from contextlib import AsyncExitStack, nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from datetime import datetime
 
 from loguru import logger
 
@@ -20,6 +21,7 @@ from nanobot.agent.runner import AgentRunSpec, AgentRunner
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
+from nanobot.agent.tools.exec_confirm import ConfirmManager
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
@@ -250,9 +252,21 @@ class AgentLoop:
             get_tool_definitions=self.tools.get_definitions,
             max_completion_tokens=provider.generation.max_tokens,
         )
+        self.confirm = ConfirmManager()
+        self.confirm.set_send_prompt_callback(self._send_to_session)
         self._register_default_tools()
         self.commands = CommandRouter()
         register_builtin_commands(self.commands)
+
+    async def _send_to_session(self, channel: str, chat_id: str, content: str):
+        """向特定会话发送消息"""
+        
+        msg = OutboundMessage(
+            channel=channel,
+            chat_id=chat_id,
+            content=content
+        )
+        await self.bus.publish_outbound(msg)
 
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
@@ -302,7 +316,7 @@ class AgentLoop:
 
     def _set_tool_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
         """Update context for all tools that need routing info."""
-        for name in ("message", "spawn", "cron"):
+        for name in ("message", "spawn", "cron", afd):
             if tool := self.tools.get(name):
                 if hasattr(tool, "set_context"):
                     tool.set_context(channel, chat_id, *([message_id] if name == "message" else []))
@@ -409,6 +423,28 @@ class AgentLoop:
             except Exception as e:
                 logger.warning("Error consuming inbound message: {}, continuing...", e)
                 continue
+
+            # 检查是否是安全确认命令（'\yes' / '\no'），并尝试解析
+            # 如果解析成功，在函数中处理确认结果（触发等待的 future）
+            is_confirm, decision = self.confirm.try_resolve(
+                msg.channel,
+                msg.chat_id,
+                msg.content.strip()
+            )
+            
+            if is_confirm:
+                # 是确认命令（'\是' / '\yes' / '\否' / '\no'）
+                if decision is not None:
+                    # 成功匹配并处理了队列中的请求
+                    await self._send_to_session(msg.channel, msg.chat_id, "确认命令已收到，处理中...")
+                else:
+                    # 是确认命令，但没有匹配的请求（可能已过期或已完成）
+                    await self._send_to_session(
+                        msg.channel,
+                        msg.chat_id,
+                        "没有待确认的指令"
+                    )
+                continue  # 不进入标准消息处理流程
 
             raw = msg.content.strip()
             if self.commands.is_priority(raw):
