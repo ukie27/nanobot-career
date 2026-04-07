@@ -5,6 +5,7 @@
 
 import asyncio
 import os
+from pathlib import Path
 import re
 import hashlib
 import tempfile
@@ -169,27 +170,19 @@ class DockerSandbox:
         self,
         command: str,
         working_dir: str,
-        network_required: bool = False
+        network_required: bool = False,
+        mount_mode: str = "ro"
     ) -> Dict[str, Any]:
         """在 Docker 沙箱中执行命令"""
         if not await self.check_docker():
             raise RuntimeError("Docker 不可用")
         
-        # 检查是否是写入操作（路径以 docker_output 结尾）
-        is_write_mode = working_dir.endswith("/docker_output") or working_dir.endswith("\\docker_output")
-        # 如果是写入模式，确保目录存在
-        if is_write_mode:
-            import os
-            os.makedirs(working_dir, exist_ok=True)
-            mount_mode = "rw"  # 可写
-        else:
-            mount_mode = "ro"  # 只读
-
         network = "bridge" if network_required else self.config.network_mode
         
         docker_cmd = [
             "docker", "run",
             "--rm",
+            "--tmpfs", "/tmp:size=100m,noexec,nosuid",  # 内存临时文件，自动清理
             "--network", network,
             "--memory", self.config.memory_limit,
             "--memory-swap", self.config.memory_limit,
@@ -252,22 +245,24 @@ class ExecTool(Tool):
     集成：安全分类 + Docker沙箱 + 队列式确认
     """
     
-    def __init__(self, sandbox_config: Optional[SandboxConfig] = None):
+    def __init__(
+            self, 
+            sandbox_config: Optional[SandboxConfig] = None,
+            working_dir: str | None = None,
+            allowed_base_dirs: Optional[List[str]] = None,
+    ):
         self.classifier = SecurityClassifier()
         self.sandbox = DockerSandbox(sandbox_config)
         self.confirm = ConfirmManager()
+
+        self.working_dir = working_dir
+        self.allowed_base_dirs = list(allowed_base_dirs or [])
+        if self.working_dir not in self.allowed_base_dirs:
+            self.allowed_base_dirs.append(self.working_dir)
+
         self._default_channel = None
         self._default_chat_id = None
         self.session_key = None
-        
-        # 统计
-        self.stats = {
-            "total": 0,
-            "blocked": 0,
-            "confirmed": 0,
-            "denied": 0,
-            "timeout": 0
-        }
         
         # 回调注入点
         self.send_message_callback: Optional[Callable[[str, str, str], asyncio.Future]] = None
@@ -278,29 +273,31 @@ class ExecTool(Tool):
 
     @property
     def description(self) -> str:
-        return """安全命令执行工具，支持沙箱执行和用户确认。
-        - 读取模式：传入普通目录路径，如 "/home/user/project" 或 "C:\\Users\\Project"，该目录将以只读方式挂载
+        return """安全命令执行工具（Docker Linux 沙箱），支持沙箱执行和用户确认，所有命令必须是 Linux 格式，即使宿主机是 Windows。
+        - 读取模式：传入普通目录路径，该目录将以只读方式挂载
         - 写入模式：传入 "docker_output" 目录路径，如 "/home/user/project/docker_output" 或 "C:\\Users\\Project\\docker_output"，该目录将自动创建并以可写方式挂载
         - 注意：docker_output 目录由工具自动创建，无需手动创建
         - 示例读取: command="cat file.txt" 或 "type file.txt", working_dir="/home/user/project" 或 "C:\\Users\\Project"
         - 示例写入: command="echo 'hello' > new_file.txt" 或 "echo hello > new_file.txt", working_dir="/home/user/project/docker_output" 或 "C:\\Users\\Project\\docker_output"
-        - 支持安全分类和用户确认机制"""
+        - 支持的"""
 
     @property
     def parameters(self) -> dict[str, Any]:
+        bases = ", ".join(self.allowed_base_dirs) if self.allowed_base_dirs else "未设置"
         return {
             "type": "object",
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "要执行的shell命令"
+                    "description": "要执行的shell命令，如 'ls -la' 或 'cat file.txt'，所有命令必须是 Linux 格式，即使宿主机是 Windows"
                 },
                 "working_dir": {
                     "type": "string", 
-                    "description": """工作目录路径。
-                    - 读取操作：传入目标目录路径，如 '/home/user/project'
-                    - 写入操作：传入目标目录下的'docker_output'子目录，如 '/home/user/project/docker_output'
-                    - docker_output目录将由工具自动创建"""
+                    "description": f"""工作目录，需要是绝对路径。
+                    - 读取操作：传入目标目录路径
+                    - 写入操作：传入目标目录下的'docker_output'子目录
+                    - docker_output目录将由工具自动创建，不需要手动创建
+                    - 允许的基目录:{bases}"""
                 }
             },
             "required": ["command"]
@@ -308,7 +305,7 @@ class ExecTool(Tool):
 
     @property
     def exclusive(self) -> bool:
-        return True  # 命令执行应该是独占的
+        return False  # 命令执行应该是独占的
 
     def set_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
         """Set the current message context."""
@@ -322,12 +319,13 @@ class ExecTool(Tool):
         self.send_message_callback = callback
         # 同时设置到 ConfirmManager
         self.confirm.set_send_prompt_callback(callback)
-    
+
     async def execute(
         self,
         command: str,
-        working_dir: Optional[str] = None,
-        **kwargs: Any  # 接受其他参数，保持兼容性
+        working_dir: str | None = None,
+        **kwargs: Any,  # 接受其他参数，保持兼容性
+        
     ) -> str:
         """
         执行命令入口，返回字符串结果
@@ -335,20 +333,37 @@ class ExecTool(Tool):
         Returns:
             执行结果字符串（成功或错误信息）
         """
-        import time
-        start_time = time.time()
+
+        cwd = working_dir or self.working_dir
+        # if not Path(cwd).is_dir():
+        #     return f"[ERROR] working_dir 必须是目录，不能是文件: {cwd}"
         
-        self.stats["total"] += 1
-        working_dir = working_dir or os.getcwd()
-        
-        # === Step 1: 安全分类 ===
+        # 安全分类
         risk_level, pattern, block_reason = self.classifier.classify(command)
         
         if risk_level == RiskLevel.FORBIDDEN:
-            self.stats["blocked"] += 1
             return f"[SECURITY] 命令被拒绝: {block_reason}"
         
-        # === Step 2: 确认流程（如需要）===
+        # 检查是否是写入操作（路径以 docker_output 结尾）
+        is_write_mode = cwd.rstrip(os.sep).endswith("docker_output")
+        # 如果是写入模式，确保目录存在
+        if is_write_mode:
+            os.makedirs(cwd, exist_ok=True)
+            mount_mode = "rw"  # 可写
+        else:
+            mount_mode = "ro"  # 只读
+
+        # 验证目录合法性
+        real_path, is_valid = self._validate_path(cwd)
+        if not is_valid:
+            allowed_list = ", ".join(self.allowed_base_dirs)
+            return f"[SECURITY] 工作目录 '{cwd}' 不在允许范围内。允许的目录: {allowed_list}"
+        
+        # 使用规范化后的路径
+        cwd = real_path
+
+
+        # 确认流程（如需要）
         requires_confirm = risk_level in (RiskLevel.NORMAL, RiskLevel.DANGEROUS)
         
         if requires_confirm:
@@ -362,19 +377,18 @@ class ExecTool(Tool):
             )
             
             if result == ConfirmResult.TIMEOUT:
-                self.stats["timeout"] += 1
                 return "[SECURITY] 确认超时，命令已取消"
             
             if result == ConfirmResult.DENY:
-                self.stats["denied"] += 1
                 return "[SECURITY] 用户拒绝执行"
         
-        # === Step 3: Docker 沙箱执行 ===
+        # Docker 沙箱执行 
         try:
             sandbox_result = await self.sandbox.execute(
                 command=command,
-                working_dir=working_dir,
-                network_required=pattern.requires_network if pattern else False
+                working_dir=cwd,
+                network_required=pattern.requires_network if pattern else False,
+                mount_mode=mount_mode
             )
             
             # 格式化输出为字符串
@@ -391,10 +405,36 @@ class ExecTool(Tool):
             
         except Exception as e:
             return f"[ERROR] 执行失败: {str(e)}"
-    def get_stats(self) -> Dict[str, int]:
-        """获取执行统计"""
-        return self.stats.copy()
     
+    def _validate_path(self, target_dir: str) -> Tuple[str, bool]:
+        """简化版：保持原始路径，验证时统一用 Path.resolve()"""
+        try:
+            # 展开 ~
+            expanded = os.path.expanduser(target_dir)
+            
+            # 获取绝对路径（保持系统原生格式）
+            abs_path = Path(expanded).resolve()
+            
+            # 验证（同样转换基目录）
+            for base in self.allowed_base_dirs:
+                if not base:
+                    continue
+                
+                base_abs = Path(os.path.expanduser(base)).resolve()
+                
+                # 检查是否以 base 开头（字符串检查，注意分隔符）
+                base_str = str(base_abs)
+                target_str = str(abs_path)
+                
+                # 统一使用正斜杠比较
+                if target_str.replace("\\", "/").startswith(base_str.replace("\\", "/")):
+                    return str(abs_path), True
+            
+            return str(abs_path), False
+            
+        except Exception:
+            return target_dir, False
+
     def cancel_session(self, channel: str, chat_id: str):
         """取消会话的所有待处理确认"""
         self.confirm.cancel_session(channel, chat_id)

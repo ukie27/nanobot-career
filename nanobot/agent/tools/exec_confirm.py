@@ -28,8 +28,8 @@ class PendingConfirm:
     command: str
     risk_level: str
     future: asyncio.Future
-    expires_at: Optional[datetime] = None
     timeout: int  # 原始超时配置
+    expires_at: Optional[datetime] = None
 
 
 @dataclass
@@ -121,7 +121,7 @@ class ConfirmManager:
             if not queue.processing:
                 queue.processing = True
                 # 后台运行，不 await
-                asyncio.create_task(self._process_queue(session_key))
+                asyncio.create_task(self._process_queue(channel, chat_id))
         
         # 无限等待，不设置超时
         # 超时由 _process_queue 控制，通过设置 future 结果来唤醒

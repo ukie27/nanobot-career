@@ -28,3 +28,5 @@ WORKDIR /workspace
 USER nanobot
 
 CMD ["/bin/bash"]
+
+# docker build -t nanobot-sandbox:latest -f Dockerfile .
