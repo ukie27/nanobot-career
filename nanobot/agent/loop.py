@@ -282,7 +282,8 @@ class AgentLoop:
         if self.exec_config.enable:
             self.tools.register(ExecTool(
                 working_dir=str(self.workspace),
-                allowed_base_dirs=self.allowed_base_dirs
+                allowed_base_dirs=self.allowed_base_dirs,
+                confirm=self.confirm
             ))
         if self.web_config.enable:
             self.tools.register(WebSearchTool(config=self.web_config.search, proxy=self.web_config.proxy))

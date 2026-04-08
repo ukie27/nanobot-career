@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from enum import Enum, auto
 from typing import Optional, Dict, Tuple, Callable, Deque
 from collections import deque
+from loguru import logger
 
 
 class ConfirmResult(Enum):
@@ -129,6 +130,7 @@ class ConfirmManager:
             result = await future
             return result
         except asyncio.CancelledError:
+
             return ConfirmResult.CANCELLED
     
     async def _process_queue(self, channel: str, chat_id: str):
@@ -171,6 +173,8 @@ class ConfirmManager:
             
             # 计算剩余时间
             remaining = (pending.expires_at - datetime.now()).total_seconds()
+            # 确保最小等待时间，避免负值或极小值
+            remaining = max(remaining, 0.001)  # 至少 1ms
 
             # 等待用户响应或超时
             try:
@@ -181,7 +185,13 @@ class ConfirmManager:
             except asyncio.TimeoutError:
                 if not pending.future.done():
                     pending.future.set_result(ConfirmResult.TIMEOUT)
-            
+            except asyncio.CancelledError:
+                # 如果是取消，检查是否是因为超时导致的
+                # 重新抛出或处理
+                logger.info("！！！cancel")
+                if not pending.future.done():
+                    pending.future.set_result(ConfirmResult.TIMEOUT)
+
             # 处理完成，从队列移除
             async with self._lock:
                 if queue.confirms and queue.confirms[0] == pending:

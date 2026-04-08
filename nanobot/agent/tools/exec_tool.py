@@ -18,6 +18,7 @@ from typing import Optional, Dict, List, Tuple, Callable, Deque, Any
 from collections import deque
 from nanobot.agent.tools.exec_confirm import ConfirmManager, ConfirmResult
 from nanobot.agent.tools.base import Tool
+from loguru import logger
 
 
 # === 安全分类模块 ===
@@ -250,10 +251,11 @@ class ExecTool(Tool):
             sandbox_config: Optional[SandboxConfig] = None,
             working_dir: str | None = None,
             allowed_base_dirs: Optional[List[str]] = None,
+            confirm:ConfirmManager = None
     ):
         self.classifier = SecurityClassifier()
         self.sandbox = DockerSandbox(sandbox_config)
-        self.confirm = ConfirmManager()
+        self.confirm = confirm or ConfirmManager()
 
         self.working_dir = working_dir
         self.allowed_base_dirs = list(allowed_base_dirs or [])
@@ -273,13 +275,13 @@ class ExecTool(Tool):
 
     @property
     def description(self) -> str:
-        return """安全命令执行工具（Docker Linux 沙箱），支持沙箱执行和用户确认，所有命令必须是 Linux 格式，即使宿主机是 Windows。
+        return """安全命令执行工具（Docker Linux 沙箱），支持沙箱执行和用户确认。
         - 读取模式：传入普通目录路径，该目录将以只读方式挂载
-        - 写入模式：传入 "docker_output" 目录路径，如 "/home/user/project/docker_output" 或 "C:\\Users\\Project\\docker_output"，该目录将自动创建并以可写方式挂载
+        - 写入模式：传入目标目录下的 "docker_output" 目录路径，如目标目录是 "C:\\Users\\Project", 则传入 "C:\\Users\\Project\\docker_output", "docker_output" 目录将自动创建并以可写方式挂载
         - 注意：docker_output 目录由工具自动创建，无需手动创建
-        - 示例读取: command="cat file.txt" 或 "type file.txt", working_dir="/home/user/project" 或 "C:\\Users\\Project"
-        - 示例写入: command="echo 'hello' > new_file.txt" 或 "echo hello > new_file.txt", working_dir="/home/user/project/docker_output" 或 "C:\\Users\\Project\\docker_output"
-        - 支持的"""
+        - 示例读取: command="cat file.txt" 或 "type file.txt", working_dir="C:\\Users\\Project"
+        - 示例写入: command="echo 'hello' > new_file.txt" 或 "echo hello > new_file.txt", working_dir="C:\\Users\\Project\\docker_output"
+        - """
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -289,11 +291,11 @@ class ExecTool(Tool):
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "要执行的shell命令，如 'ls -la' 或 'cat file.txt'，所有命令必须是 Linux 格式，即使宿主机是 Windows"
+                    "description": "要执行的shell命令，如 'ls -la' 或 'cat file.txt'，所有命令必须是 Linux 格式"
                 },
                 "working_dir": {
                     "type": "string", 
-                    "description": f"""工作目录，需要是绝对路径。
+                    "description": f"""工作目录，需要是绝对路径。首先要判断是读操作还是写入操作，然后根据以下规则生成路径：
                     - 读取操作：传入目标目录路径
                     - 写入操作：传入目标目录下的'docker_output'子目录
                     - docker_output目录将由工具自动创建，不需要手动创建
@@ -343,15 +345,6 @@ class ExecTool(Tool):
         
         if risk_level == RiskLevel.FORBIDDEN:
             return f"[SECURITY] 命令被拒绝: {block_reason}"
-        
-        # 检查是否是写入操作（路径以 docker_output 结尾）
-        is_write_mode = cwd.rstrip(os.sep).endswith("docker_output")
-        # 如果是写入模式，确保目录存在
-        if is_write_mode:
-            os.makedirs(cwd, exist_ok=True)
-            mount_mode = "rw"  # 可写
-        else:
-            mount_mode = "ro"  # 只读
 
         # 验证目录合法性
         real_path, is_valid = self._validate_path(cwd)
@@ -362,9 +355,19 @@ class ExecTool(Tool):
         # 使用规范化后的路径
         cwd = real_path
 
+        # 检查是否是写入操作（路径以 docker_output 结尾）
+        is_write_mode = cwd.rstrip(os.sep).endswith("docker_output")
+        # 如果是写入模式，确保目录存在
+        if is_write_mode:
+            os.makedirs(cwd, exist_ok=True)
+            mount_mode = "rw"  # 可写
+        else:
+            mount_mode = "ro"  # 只读
+
 
         # 确认流程（如需要）
         requires_confirm = risk_level in (RiskLevel.NORMAL, RiskLevel.DANGEROUS)
+        logger.info("requires_confirm: {}", requires_confirm)
         
         if requires_confirm:
             # 请求确认（队列式，会挂起等待）
@@ -375,6 +378,7 @@ class ExecTool(Tool):
                 risk_level=risk_level.name,
                 timeout=60 if risk_level == RiskLevel.NORMAL else 120
             )
+            logger.info("requires_confirm_result: {}", result)
             
             if result == ConfirmResult.TIMEOUT:
                 return "[SECURITY] 确认超时，命令已取消"
