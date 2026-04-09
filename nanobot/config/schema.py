@@ -137,8 +137,9 @@ class WebToolsConfig(Base):
 
 class ExecToolConfig(Base):
     """Shell exec tool configuration."""
-    path_append: str = ""
     enable: bool = True
+    timeout: int = 60
+    path_append: str = ""
 
 
 

@@ -27,7 +27,6 @@ class PendingConfirm:
     """单个确认请求"""
     request_id: str
     command: str
-    risk_level: str
     future: asyncio.Future
     timeout: int  # 原始超时配置
     expires_at: Optional[datetime] = None
@@ -80,7 +79,6 @@ class ConfirmManager:
         channel: str,
         chat_id: str,
         command: str,
-        risk_level: str,
         timeout: int = 60
     ) -> ConfirmResult:
         """
@@ -90,7 +88,6 @@ class ConfirmManager:
         Args:
             session_key: 会话标识
             command: 要执行的命令
-            risk_level: 风险等级
             timeout: 超时秒数（由队列处理器使用）
         
         Returns:
@@ -104,7 +101,6 @@ class ConfirmManager:
         pending = PendingConfirm(
             request_id=f"{session_key}_{uuid.uuid4().hex[:6]}",
             command=command,
-            risk_level=risk_level,
             future=future,
             expires_at=None,
             timeout=timeout
@@ -289,7 +285,7 @@ class ConfirmManager:
         remaining = max(0, remaining)
         
         
-        return f"""执行确认请求 [{pending.risk_level}]{position_info}
+        return f"""执行确认请求 {position_info}
 
 即将执行: `{pending.command}`
 请求ID: `{pending.request_id}`

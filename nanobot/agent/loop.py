@@ -21,12 +21,12 @@ from nanobot.agent.runner import AgentRunSpec, AgentRunner
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
-from nanobot.agent.tools.exec_confirm import ConfirmManager
+from nanobot.agent.tools.confirm import ConfirmManager
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
-# from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.tools.exec_tool import ExecTool
+from nanobot.agent.tools.shell import ExecTool
+# from nanobot.agent.tools.exec_tool import ExecTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
@@ -229,6 +229,7 @@ class AgentLoop:
             max_tool_result_chars=self.max_tool_result_chars,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
+            
         )
 
         self._running = False
@@ -280,11 +281,19 @@ class AgentLoop:
         for cls in (WriteFileTool, EditFileTool, ListDirTool):
             self.tools.register(cls(workspace=self.workspace, allowed_dir=allowed_dir))
         if self.exec_config.enable:
+            # self.tools.register(ExecTool(
+            #     working_dir=str(self.workspace),
+            #     allowed_base_dirs=self.allowed_base_dirs,
+            #     confirm=self.confirm,
+            #     path_append=self.exec_config.path_append,
+            # ))
+
             self.tools.register(ExecTool(
                 working_dir=str(self.workspace),
-                allowed_base_dirs=self.allowed_base_dirs,
-                confirm=self.confirm,
+                timeout=self.exec_config.timeout,
+                restrict_to_workspace=self.restrict_to_workspace,
                 path_append=self.exec_config.path_append,
+                confirm=self.confirm
             ))
         if self.web_config.enable:
             self.tools.register(WebSearchTool(config=self.web_config.search, proxy=self.web_config.proxy))

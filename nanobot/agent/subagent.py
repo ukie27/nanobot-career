@@ -13,7 +13,8 @@ from nanobot.agent.runner import AgentRunSpec, AgentRunner
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.exec_tool import ExecTool
+from nanobot.agent.tools.shell import ExecTool
+from nanobot.agent.tools.confirm import ConfirmManager
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
@@ -49,6 +50,7 @@ class SubagentManager:
         web_config: "WebToolsConfig | None" = None,
         exec_config: "ExecToolConfig | None" = None,
         restrict_to_workspace: bool = False,
+        confirm: ConfirmManager | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig
 
@@ -63,6 +65,7 @@ class SubagentManager:
         self.runner = AgentRunner(provider)
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
+        self.confirm = confirm
 
     async def spawn(
         self,
@@ -117,7 +120,12 @@ class SubagentManager:
             tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir))
             if self.exec_config.enable:
                 tools.register(ExecTool(
-                    working_dir=str(self.workspace),
+                working_dir=str(self.workspace),
+                timeout=self.exec_config.timeout,
+                restrict_to_workspace=self.restrict_to_workspace,
+                path_append=self.exec_config.path_append,
+                confirm=self.confirm,
+                requires_confirm=False
                 ))
             if self.web_config.enable:
                 tools.register(WebSearchTool(config=self.web_config.search, proxy=self.web_config.proxy))
