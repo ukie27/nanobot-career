@@ -283,7 +283,8 @@ class AgentLoop:
             self.tools.register(ExecTool(
                 working_dir=str(self.workspace),
                 allowed_base_dirs=self.allowed_base_dirs,
-                confirm=self.confirm
+                confirm=self.confirm,
+                path_append=self.exec_config.path_append,
             ))
         if self.web_config.enable:
             self.tools.register(WebSearchTool(config=self.web_config.search, proxy=self.web_config.proxy))
@@ -585,6 +586,7 @@ class AgentLoop:
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
         if self._restore_runtime_checkpoint(session):
+            self._clear_runtime_checkpoint(session)  # 立即清除，而不是最后清除，以免过期的 checkpoint 污染后续消息处理
             self.sessions.save(session)
 
         # Slash commands
