@@ -220,6 +220,8 @@ class AgentLoop:
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.runner = AgentRunner(provider)
+        self.confirm = ConfirmManager()
+        self.confirm.set_send_prompt_callback(self._send_to_session)
         self.subagents = SubagentManager(
             provider=provider,
             workspace=workspace,
@@ -229,7 +231,7 @@ class AgentLoop:
             max_tool_result_chars=self.max_tool_result_chars,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
-            
+            confirm=self.confirm
         )
 
         self._running = False
@@ -256,8 +258,7 @@ class AgentLoop:
             max_completion_tokens=provider.generation.max_tokens,
         )
         self.allowed_base_dirs = allowed_base_dirs
-        self.confirm = ConfirmManager()
-        self.confirm.set_send_prompt_callback(self._send_to_session)
+
         self._register_default_tools()
 
         self.commands = CommandRouter()

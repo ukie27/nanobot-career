@@ -125,7 +125,9 @@ class SubagentManager:
                 restrict_to_workspace=self.restrict_to_workspace,
                 path_append=self.exec_config.path_append,
                 confirm=self.confirm,
-                requires_confirm=False
+                requires_confirm=True,
+                default_channel=origin['channel'],
+                default_chat_id=origin['chat_id'],
                 ))
             if self.web_config.enable:
                 tools.register(WebSearchTool(config=self.web_config.search, proxy=self.web_config.proxy))
@@ -168,7 +170,6 @@ class SubagentManager:
                 )
                 return
             final_result = result.final_content or "Task completed but no final response was generated."
-
             logger.info("Subagent [{}] completed successfully", task_id)
             await self._announce_result(task_id, label, task, final_result, origin, "ok")
 

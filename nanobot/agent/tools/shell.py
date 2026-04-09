@@ -27,6 +27,8 @@ class ExecTool(Tool):
         path_append: str = "",
         requires_confirm: bool = True,
         confirm:ConfirmManager = None,
+        default_channel: str = "cli",
+        default_chat_id: str = "direct",
     ):
         self.timeout = timeout
         self.working_dir = working_dir
@@ -46,8 +48,8 @@ class ExecTool(Tool):
         self.path_append = path_append
         self.confirm = confirm
         self.requires_confirm = requires_confirm if confirm else False
-        self._default_channel = None
-        self._default_chat_id = None
+        self._default_channel = default_channel
+        self._default_chat_id = default_chat_id
 
     def set_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
         """Set the current message context."""
@@ -123,8 +125,6 @@ class ExecTool(Tool):
             
             if result == ConfirmResult.DENY:
                 return "[SECURITY] 用户拒绝执行"
-
-
 
         effective_timeout = min(timeout or self.timeout, self._MAX_TIMEOUT)
 
