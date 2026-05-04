@@ -1,6 +1,6 @@
 ---
 name: boss-job-assistant
-description: 为中文用户提供基于 OpenCLI、BOSS 直聘与小红书的求职辅助，涵盖实习、全职、校招、社招、岗位搜索、职位筛选、公司口碑研究、薪资与面经线索收集、职位比较、投递建议与职业规划建议。Use when the user wants to search BOSS jobs, evaluate companies or roles with Xiaohongshu evidence, compare offers, narrow down job targets, understand salary, reputation, and background risk, or receive structured career advice for internship or full-time decisions.
+description: 为用户提供基于 OpenCLI、BOSS 直聘与小红书的求职辅助，涵盖实习、全职、校招、社招、岗位搜索、职位筛选、公司口碑研究、薪资与面经线索收集、职位比较、投递建议与职业规划建议。Use when the user wants to search BOSS jobs, evaluate companies or roles with Xiaohongshu evidence, compare offers, narrow down job targets, understand salary, reputation, and background risk, or receive structured career advice for internship or full-time decisions.
 ---
 
 # BOSS 求职助手
