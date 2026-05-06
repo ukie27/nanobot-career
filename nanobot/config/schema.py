@@ -137,10 +137,17 @@ class WebToolsConfig(Base):
 
 class ExecToolConfig(Base):
     """Shell exec tool configuration."""
+
     enable: bool = True
     timeout: int = 60
     path_append: str = ""
 
+
+class CareerToolConfig(Base):
+    """Career assistant tool configuration."""
+
+    enable: bool = True
+    db_path: str = "career/career.db"
 
 
 class MCPServerConfig(Base):
@@ -160,6 +167,7 @@ class ToolsConfig(Base):
 
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
+    career: CareerToolConfig = Field(default_factory=CareerToolConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 

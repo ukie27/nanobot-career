@@ -613,7 +613,7 @@ class OpenAICompatProvider(LLMProvider):
             reasoning_effort, tool_choice,
         )
         try:
-            return self._parse(await self._client.chat.completions.create(**kwargs))
+            return self._parse(await self._client.chat.completions.create(**kwargs,extra_body={"thinking": {"type": "disabled"}}))
         except Exception as e:
             return self._handle_error(e)
 
@@ -636,7 +636,7 @@ class OpenAICompatProvider(LLMProvider):
         kwargs["stream_options"] = {"include_usage": True}
         idle_timeout_s = int(os.environ.get("NANOBOT_STREAM_IDLE_TIMEOUT_S", "90"))
         try:
-            stream = await self._client.chat.completions.create(**kwargs)
+            stream = await self._client.chat.completions.create(**kwargs,extra_body={"thinking": {"type": "disabled"}})
             chunks: list[Any] = []
             stream_iter = stream.__aiter__()
             while True:
